@@ -1,0 +1,88 @@
+import { Product } from './types';
+
+export const products: Product[] = [
+    {
+        id: 'black-coffee',
+        name: 'Black Coffee',
+        price: 30_000,
+        category: 'Coffee',
+        emoji: '☕',
+    },
+    {
+        id: 'milk-coffee',
+        name: 'Cà Phê Sữa',
+        price: 35_000,
+        category: 'Coffee',
+        emoji: '🥛',
+    },
+    {
+        id: 'cappuccino',
+        name: 'Cappuccino',
+        price: 45_000,
+        category: 'Coffee',
+        emoji: '☕',
+    },
+    {
+        id: 'latte',
+        name: 'Caramel Latte',
+        price: 55_000,
+        category: 'Coffee',
+        emoji: '🍮',
+    },
+    {
+        id: 'milk-tea',
+        name: 'Trà Sữa',
+        price: 50_000,
+        category: 'Tea',
+        emoji: '🧋',
+    },
+    {
+        id: 'green-tea',
+        name: 'Matcha Latte',
+        price: 55_000,
+        category: 'Tea',
+        emoji: '🍵',
+    },
+    {
+        id: 'croissant',
+        name: 'Croissant',
+        price: 25_000,
+        category: 'Food',
+        emoji: '🥐',
+    },
+    {
+        id: 'banh-mi',
+        name: 'Bánh Mì',
+        price: 35_000,
+        category: 'Food',
+        emoji: '🥖',
+    },
+    {
+        id: 'sandwich',
+        name: 'Club Sandwich',
+        price: 65_000,
+        category: 'Food',
+        emoji: '🥪',
+    },
+    {
+        id: 'cake',
+        name: 'Tiramisu',
+        price: 45_000,
+        category: 'Food',
+        emoji: '🍰',
+    },
+    {
+        id: 'smoothie',
+        name: 'Mango Smoothie',
+        price: 50_000,
+        category: 'Drinks',
+        emoji: '🥭',
+    },
+    {
+        id: 'juice',
+        name: 'Orange Juice',
+        price: 40_000,
+        category: 'Drinks',
+        emoji: '🍊',
+    },
+];

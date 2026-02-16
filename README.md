@@ -1,89 +1,117 @@
-# TransCredit — Payment Gateway Simulation
+# TransCredit — Proprietary Payment Gateway Simulation
 
-A closed-loop payment system (mini-Momo/Stripe) with server-side authoritative ledger logic.
+A closed-loop fintech payment gateway simulation built for educational purposes. Features a **merchant POS web app** and a **consumer mobile app** connected through a secure server-side backend powered by Firebase.
 
-## Architecture
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+## ✨ Features
+
+### Merchant Web App (Next.js 14)
+- **POS Product Grid** — Tap-to-add product catalog (Coffee, Food, Drinks, Snacks)
+- **Cart & Billing** — Quantity controls, line totals, charge button
+- **QR Code Generation** — Dynamic QR codes for each order
+- **Real-time Payment Status** — Firestore listeners with animated UI feedback
+- **Audio Notification** — "Ding" sound on successful payment
+- **Customer Management** — Admin table showing all registered users and balances
+- **Dark Fintech UI** — Glassmorphism, gradients, micro-animations
+
+### Consumer Mobile App (React Native / Expo)
+- **Authentication** — Email/Password login & registration via Firebase Auth
+- **Onboarding** — Profile setup with name, phone, virtual bank selection
+- **Virtual Wallet** — Auto-generated account number with ₫5,000,000 starting balance
+- **QR Scan & Pay** — Camera-based QR scanning with PIN confirmation
+- **P2P Transfer** — Send money to other users by account number
+- **Premium Banking UI** — Card display, quick actions, dark theme
+
+### Backend API (Next.js API Routes)
+- `POST /api/auth/register` — Create user profile + wallet
+- `POST /api/create-order` — Create payment order
+- `GET /api/orders/[id]` — Fetch order details
+- `POST /api/execute-transaction` — Atomic payment execution
+- `POST /api/p2p-transfer` — Peer-to-peer money transfer
+- `GET /api/wallet/[id]` — Fetch wallet data
+- `GET /api/customers` — Admin user listing
+- `POST /api/seed` — Seed demo data
+
+## 🏗️ Architecture
 
 ```
-┌─────────────────────────┐        ┌──────────────────────┐
-│   Merchant Web (POS)    │        │   Mobile App (User)  │
-│   Next.js 14 App Router │        │   React Native/Expo  │
-│   - Enter Amount        │        │   - Scan QR          │
-│   - Generate QR         │◀──────▶│   - Review Checkout  │
-│   - Real-time Status    │  QR    │   - PIN Confirm      │
-└──────────┬──────────────┘        └──────────┬───────────┘
-           │                                  │
-           │      ┌──────────────────┐        │
-           └─────▶│  API Routes      │◀───────┘
-                  │  (Central Bank)  │
-                  │  - create-order  │
-                  │  - get order     │
-                  │  - execute-tx    │  ◀── Atomic Transaction
-                  └────────┬─────────┘
-                           │
-                  ┌────────▼─────────┐
-                  │   Firestore      │
-                  │   - wallets      │
-                  │   - orders       │
-                  │   - ledger_logs  │
-                  └──────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                   Firebase                          │
+│  ┌─────────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │   Firestore  │  │   Auth   │  │  Ledger Logs │   │
+│  │  wallets/    │  │          │  │              │   │
+│  │  orders/     │  │          │  │              │   │
+│  │  users/      │  │          │  │              │   │
+│  └──────┬───────┘  └────┬─────┘  └──────────────┘   │
+└─────────┼──────────────┼────────────────────────────┘
+          │              │
+    ┌─────┴──────────────┴─────┐
+    │    Next.js API Routes    │
+    │   (Server-side authority) │
+    │   Atomic Transactions    │
+    └──────┬──────────┬────────┘
+           │          │
+    ┌──────┴───┐  ┌───┴──────────┐
+    │  Web POS │  │ Mobile App   │
+    │ (Merchant)│  │ (Consumer)   │
+    └──────────┘  └──────────────┘
 ```
 
-## Quick Start
+## 🛡️ Security Design
+- **Server-side authority** — All financial logic runs on the API, never the client
+- **Atomic Firestore Transactions** — Prevents race conditions on payments and transfers
+- **Immutable Ledger** — Every transaction logged to `ledger_logs` collection
+- **Balance validation** — Server checks funds before any deduction
 
-### 1. Web (Merchant POS + API)
+## 🚀 Getting Started
 
+### Prerequisites
+- Node.js 18+
+- Firebase project with Firestore enabled
+- Expo Go app on your phone (for mobile testing)
+
+### Backend + Web App
 ```bash
 cd web
-cp .env.local.example .env.local  # Fill in Firebase credentials
 npm install
-npm run dev
+cp .env.local.example .env.local  # Add your Firebase credentials
+npm run dev                       # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+### Mobile App
+```bash
+cd mobile
+npm install
+npx expo start                    # Scan QR with Expo Go
+```
 
-### 2. Seed Test Data
-
+### Seed Demo Data
 ```bash
 curl -X POST http://localhost:3000/api/seed
 ```
 
-Creates:
-- `merchant-001`: TransCredit Coffee (balance: 0)
-- `user-001`: Nguyen Van A (balance: 5,000,000 VND)
-- `user-002`: Tran Thi B (balance: 2,000,000 VND)
-
-### 3. Mobile (User Bank App)
-
-```bash
-cd mobile
-npm install
-npx expo start
+## 📂 Project Structure
+```
+TransCredit/
+├── web/                          # Next.js 14 (Backend + Merchant POS)
+│   ├── src/app/
+│   │   ├── api/                  # API Routes (create-order, execute-transaction, etc.)
+│   │   ├── customers/            # Customer management page
+│   │   └── page.tsx              # POS main page
+│   ├── src/components/           # ProductGrid, Cart, QRDisplay, OrderStatus
+│   └── src/lib/                  # Firebase config, types, products
+├── mobile/                       # React Native (Expo) Consumer App
+│   ├── screens/                  # AuthScreen, OnboardingScreen, TransferScreen
+│   ├── components/               # PinPad, PaymentResult
+│   ├── lib/                      # API client, Firebase config, types
+│   └── App.tsx                   # Main app with auth routing
+├── README.md
+└── LICENSE
 ```
 
-Scan QR with Expo Go on your device.
+## 🏦 Supported Banks (Simulated)
+Techcombank, MBBank, Vietcombank, VPBank, ACB, Sacombank, TPBank, BIDV
 
-> **Note:** Update `API_BASE_URL` in `mobile/lib/api.ts` to your machine's LAN IP.
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Backend | Next.js API Routes (serverless) |
-| Database | Firebase Firestore (atomic transactions) |
-| Merchant App | Next.js 14, App Router |
-| User App | React Native, Expo, TypeScript |
-
-## API Routes
-
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/api/create-order` | POST | Create a pending order |
-| `/api/orders/[id]` | GET | Fetch order details |
-| `/api/execute-transaction` | POST | **Atomic payment** — validates, transfers, logs |
-| `/api/seed` | POST | Create demo wallets |
-
-## License
-
-Internal simulation — not for production use without real banking API integration.
-# transcredit
+## 📄 License
+[MIT](./LICENSE)

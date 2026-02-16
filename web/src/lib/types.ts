@@ -1,11 +1,23 @@
 // ===== Firestore Document Types =====
 
+export interface UserProfile {
+    uid: string;
+    email: string;
+    displayName: string;
+    phoneNumber: string;
+    bankName: string;
+    accountNumber: string;
+    createdAt: string;
+}
+
 export interface Wallet {
     userId: string;
     displayName: string;
     balance: number;
     points: number;
     currency: 'VND';
+    accountNumber: string;
+    bankName: string;
     createdAt: string;
 }
 
@@ -27,7 +39,8 @@ export interface LedgerLog {
     fromWallet: string;
     toWallet: string;
     amount: number;
-    type: 'payment' | 'reward';
+    type: 'payment' | 'reward' | 'p2p';
+    message?: string;
     timestamp: string;
 }
 
@@ -58,9 +71,69 @@ export interface ExecuteTransactionResponse {
     pointsEarned?: number;
 }
 
+export interface RegisterRequest {
+    uid: string;
+    email: string;
+    displayName: string;
+    phoneNumber: string;
+    bankName: string;
+}
+
+export interface RegisterResponse {
+    success: boolean;
+    user: UserProfile;
+    wallet: {
+        balance: number;
+        accountNumber: string;
+    };
+}
+
+export interface P2PTransferRequest {
+    senderUid: string;
+    receiverAccountNumber: string;
+    amount: number;
+    message?: string;
+}
+
+export interface P2PTransferResponse {
+    success: boolean;
+    message: string;
+    newBalance?: number;
+    receiverName?: string;
+}
+
 // ===== QR Code Payload =====
 
 export interface QRPayload {
     orderId: string;
     action: 'pay';
 }
+
+// ===== Product Types =====
+
+export interface Product {
+    id: string;
+    name: string;
+    price: number;
+    category: string;
+    emoji: string;
+}
+
+export interface CartItem extends Product {
+    quantity: number;
+}
+
+// ===== Bank List =====
+
+export const BANK_LIST = [
+    'Techcombank',
+    'MBBank',
+    'Vietcombank',
+    'VPBank',
+    'ACB',
+    'Sacombank',
+    'TPBank',
+    'BIDV',
+] as const;
+
+export type BankName = (typeof BANK_LIST)[number];

@@ -1,149 +1,189 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { clientDb } from '@/lib/firebase-client';
-import AmountInput from '@/components/AmountInput';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Product, CartItem, Order } from '@/lib/types';
+import { products } from '@/lib/products';
+import ProductGrid from '@/components/ProductGrid';
+import Cart from '@/components/Cart';
 import QRDisplay from '@/components/QRDisplay';
 import OrderStatus from '@/components/OrderStatus';
-import type { Order } from '@/lib/types';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { clientDb } from '@/lib/firebase-client';
 
-type Stage = 'input' | 'qr' | 'completed' | 'failed';
+type Stage = 'pos' | 'qr' | 'completed' | 'failed';
 
-export default function MerchantPOS() {
-  const [stage, setStage] = useState<Stage>('input');
+export default function POSPage() {
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [activeCategory, setActiveCategory] = useState('All');
+  const [stage, setStage] = useState<Stage>('pos');
+  const [orderId, setOrderId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [orderId, setOrderId] = useState<string>('');
-  const [amount, setAmount] = useState<number>(0);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const dingAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // ── Real-time listener for order status ──────────────────
+  // Preload ding audio
   useEffect(() => {
-    if (!orderId || stage !== 'qr') return;
+    dingAudioRef.current = new Audio('/sounds/ding.mp3');
+    dingAudioRef.current.volume = 0.7;
+  }, []);
 
-    const unsubscribe = onSnapshot(
-      doc(clientDb, 'orders', orderId),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data() as Order;
-          if (data.status === 'COMPLETED') {
-            setStage('completed');
-          } else if (data.status === 'FAILED') {
-            setStage('failed');
-          }
-        }
-      },
-      (err) => {
-        console.error('Firestore listener error:', err);
+  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  // ── Cart actions ──────────────────────────────────────
+  const addToCart = useCallback((product: Product) => {
+    setCart((prev) => {
+      const existing = prev.find((item) => item.id === product.id);
+      if (existing) {
+        return prev.map((item) =>
+          item.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
       }
+      return [...prev, { ...product, quantity: 1 }];
+    });
+  }, []);
+
+  const updateQuantity = useCallback((id: string, delta: number) => {
+    setCart((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, quantity: item.quantity + delta } : item
+      ).filter((item) => item.quantity > 0)
     );
+  }, []);
 
-    return () => unsubscribe();
-  }, [orderId, stage]);
+  const removeItem = useCallback((id: string) => {
+    setCart((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
-  // ── Create order handler ─────────────────────────────────
-  const handleCreateOrder = async (inputAmount: number) => {
+  const clearCart = useCallback(() => setCart([]), []);
+
+  // ── Checkout ──────────────────────────────────────────
+  const handleCheckout = async () => {
+    if (total <= 0) return;
     setIsLoading(true);
-    setError('');
-
+    setError(null);
     try {
       const res = await fetch('/api/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           merchantId: 'merchant-001',
-          amount: inputAmount,
+          amount: total,
           type: 'payment',
         }),
       });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to create order');
-      }
-
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create order');
       setOrderId(data.orderId);
-      setAmount(inputAmount);
       setStage('qr');
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Something went wrong';
-      setError(message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error creating order');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // ── Reset to start new transaction ───────────────────────
-  const handleNewTransaction = () => {
-    setStage('input');
-    setOrderId('');
-    setAmount(0);
-    setError('');
+  // ── Firestore listener for order status ───────────────
+  useEffect(() => {
+    if (!orderId || stage !== 'qr') return;
+    const unsubscribe = onSnapshot(
+      doc(clientDb, 'orders', orderId),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data() as Order;
+          if (data.status === 'COMPLETED') {
+            // Play ding sound
+            dingAudioRef.current?.play().catch(() => { });
+            setStage('completed');
+          } else if (data.status === 'FAILED') {
+            setStage('failed');
+          }
+        }
+      },
+      (err) => console.error('Snapshot error:', err)
+    );
+    return () => unsubscribe();
+  }, [orderId, stage]);
+
+  // ── Reset ─────────────────────────────────────────────
+  const handleNewOrder = () => {
+    setCart([]);
+    setOrderId(null);
+    setError(null);
+    setStage('pos');
   };
 
   return (
-    <main className="merchant-app">
-      {/* Header */}
-      <header className="merchant-header">
-        <div className="logo">
-          <div className="logo-icon">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-              <rect width="28" height="28" rx="8" fill="url(#logo-grad)" />
-              <path d="M8 14l4 4 8-8" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <defs>
-                <linearGradient id="logo-grad" x1="0" y1="0" x2="28" y2="28">
-                  <stop stopColor="#6366f1" />
-                  <stop offset="1" stopColor="#8b5cf6" />
-                </linearGradient>
-              </defs>
-            </svg>
+    <div className="h-screen flex flex-col bg-[#0a0e17]">
+      {/* Top Bar */}
+      <header className="flex items-center justify-between px-6 py-3 border-b border-[#1e293b] bg-[#0a0e17]/80 backdrop-blur-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-white text-sm font-bold">
+            TC
           </div>
-          <span className="logo-text">TransCredit</span>
+          <div>
+            <h1 className="text-base font-semibold text-slate-100">TransCredit Coffee</h1>
+            <p className="text-xs text-slate-500">POS Terminal</p>
+          </div>
         </div>
-        <div className="merchant-badge">
-          <span className="badge-dot" />
-          POS Terminal
-        </div>
+        <nav className="flex items-center gap-1">
+          <a href="/" className="px-3 py-1.5 rounded-lg text-sm font-medium text-indigo-400 bg-indigo-500/10">
+            POS
+          </a>
+          <a href="/customers" className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-500 hover:text-slate-300 hover:bg-[#1e293b] transition-colors">
+            Customers
+          </a>
+        </nav>
       </header>
 
-      {/* Content */}
-      <section className="merchant-content">
-        {stage === 'input' && (
-          <div className="card fade-in">
-            <h1 className="card-title">New Payment</h1>
-            <p className="card-subtitle">Enter the amount to charge the customer</p>
-            {error && <div className="error-banner">{error}</div>}
-            <AmountInput onSubmit={handleCreateOrder} isLoading={isLoading} />
-          </div>
+      {/* Main Content */}
+      <main className="flex-1 flex overflow-hidden">
+        {stage === 'pos' && (
+          <>
+            {/* Product Grid — Left */}
+            <div className="flex-1 p-4 overflow-hidden">
+              <ProductGrid
+                products={products}
+                onAddToCart={addToCart}
+                activeCategory={activeCategory}
+                onCategoryChange={setActiveCategory}
+              />
+            </div>
+            {/* Cart — Right */}
+            <div className="w-[380px] p-4 pl-0">
+              <Cart
+                items={cart}
+                onUpdateQuantity={updateQuantity}
+                onRemoveItem={removeItem}
+                onClearCart={clearCart}
+                onCheckout={handleCheckout}
+                total={total}
+                isLoading={isLoading}
+              />
+              {error && (
+                <p className="mt-2 text-xs text-red-400 text-center">{error}</p>
+              )}
+            </div>
+          </>
         )}
 
-        {stage === 'qr' && (
-          <div className="card fade-in">
-            <QRDisplay orderId={orderId} amount={amount} />
-            <button className="cancel-btn" onClick={handleNewTransaction}>
-              Cancel & Start Over
-            </button>
+        {stage === 'qr' && orderId && (
+          <div className="flex-1 flex items-center justify-center animate-fade-in-up">
+            <QRDisplay orderId={orderId} amount={total} onCancel={handleNewOrder} />
           </div>
         )}
 
         {(stage === 'completed' || stage === 'failed') && (
-          <div className="card fade-in">
+          <div className="flex-1 flex items-center justify-center animate-fade-in-up">
             <OrderStatus
               status={stage === 'completed' ? 'COMPLETED' : 'FAILED'}
-              amount={amount}
+              amount={total}
+              onNewOrder={handleNewOrder}
             />
-            <button className="new-transaction-btn" onClick={handleNewTransaction}>
-              New Transaction
-            </button>
           </div>
         )}
-      </section>
-
-      {/* Footer */}
-      <footer className="merchant-footer">
-        <p>TransCredit Payment Gateway v1.0 — Internal Simulation</p>
-      </footer>
-    </main>
+      </main>
+    </div>
   );
 }

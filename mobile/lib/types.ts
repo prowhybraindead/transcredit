@@ -1,13 +1,4 @@
-// ===== Mirrors the web/src/lib/types.ts =====
-
-export interface Wallet {
-    userId: string;
-    displayName: string;
-    balance: number;
-    points: number;
-    currency: 'VND';
-    createdAt: string;
-}
+// ── Mobile-side type definitions ──────────────────────
 
 export interface Order {
     id: string;
@@ -35,7 +26,20 @@ export interface ExecuteTransactionResponse {
     pointsEarned?: number;
 }
 
-export interface QRPayload {
-    orderId: string;
-    action: 'pay';
+export interface UserProfile {
+    uid: string;
+    email: string;
+    displayName: string;
+    phoneNumber: string;
+    bankName: string;
+    accountNumber: string;
+    createdAt: string;
+}
+
+export interface WalletData {
+    balance: number;
+    accountNumber: string;
+    bankName: string;
+    displayName: string;
+    points: number;
 }

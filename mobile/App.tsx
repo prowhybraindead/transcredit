@@ -1,360 +1,556 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Animated,
-  StatusBar,
   ActivityIndicator,
   Alert,
-  Platform,
-  ScrollView,
+  Dimensions,
 } from 'react-native';
-import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
-import { api, ApiError } from './lib/api';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { auth } from './lib/firebase';
+import { api } from './lib/api';
+import { Order, WalletData } from './lib/types';
 import PinPad from './components/PinPad';
 import PaymentResult from './components/PaymentResult';
-import type { Order, ExecuteTransactionResponse } from './lib/types';
+import AuthScreen from './screens/AuthScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
+import TransferScreen from './screens/TransferScreen';
 
-// ── Navigation state (no router needed for this flow) ────
-type Screen = 'home' | 'scan' | 'checkout' | 'pin' | 'result';
+type Screen = 'loading' | 'auth' | 'onboarding' | 'home' | 'scan' | 'checkout' | 'pin' | 'result' | 'transfer';
 
-// ── Hardcoded user for demo ──────────────────────────────
-const DEMO_USER_ID = 'user-001';
-const DEMO_USER_NAME = 'Nguyen Van A';
-const DEMO_USER_BALANCE = 5_000_000;
+const { width } = Dimensions.get('window');
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('home');
-  const [order, setOrder] = useState<Order | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [txResult, setTxResult] = useState<ExecuteTransactionResponse | null>(null);
-  const [txError, setTxError] = useState<string>('');
-  const [balance, setBalance] = useState(DEMO_USER_BALANCE);
+  // ── Auth state ────────────────────────────────────────
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [hasProfile, setHasProfile] = useState<boolean | null>(null);
 
+  // ── Screen state ──────────────────────────────────────
+  const [screen, setScreen] = useState<Screen>('loading');
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [txResult, setTxResult] = useState<{
+    success: boolean;
+    message: string;
+    newBalance?: number;
+    pointsEarned?: number;
+  } | null>(null);
+  const [scanned, setScanned] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
 
-  const formatVND = (value: number) => '₫' + value.toLocaleString('vi-VN');
-
-  // ── Handle QR scan ───────────────────────────────────────
-  const handleBarCodeScanned = async ({ data }: { data: string }) => {
-    if (scanning) return;
-    setScanning(true);
-
-    try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const parsed = JSON.parse(data);
-
-      if (!parsed.orderId || parsed.action !== 'pay') {
-        Alert.alert('Invalid QR', 'This QR code is not a valid payment request.');
-        setScanning(false);
-        return;
+  // ── Auth listener ─────────────────────────────────────
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      setAuthLoading(false);
+      if (!user) {
+        setScreen('auth');
+        setWallet(null);
+        setHasProfile(null);
       }
+    });
+    return () => unsubscribe();
+  }, []);
 
-      setLoading(true);
-      const orderData = await api.getOrder(parsed.orderId);
-      setOrder(orderData);
-      setScreen('checkout');
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : 'Could not read QR code';
-      Alert.alert('Error', message);
-      setScanning(false);
-    } finally {
-      setLoading(false);
+  // ── Fetch wallet when user is authenticated ───────────
+  useEffect(() => {
+    if (!firebaseUser) return;
+    fetchWallet(firebaseUser.uid);
+  }, [firebaseUser]);
+
+  const fetchWallet = async (uid: string) => {
+    try {
+      const data = await api.getWallet(uid);
+      setWallet(data);
+      setHasProfile(true);
+      setScreen('home');
+    } catch (e: any) {
+      if (e?.status === 404) {
+        setHasProfile(false);
+        setScreen('onboarding');
+      } else {
+        console.log('Wallet fetch error:', e?.message);
+        setHasProfile(false);
+        setScreen('onboarding');
+      }
     }
   };
 
-  // ── Handle PIN completion → execute transaction ──────────
-  const handlePinComplete = async (_pin: string) => {
-    if (!order) return;
+  // ── Auth handlers ─────────────────────────────────────
+  const handleAuthSuccess = (uid: string, email: string, isNewUser: boolean) => {
+    if (isNewUser) {
+      setScreen('onboarding');
+    }
+    // The onAuthStateChanged listener will handle the rest
+  };
 
-    setLoading(true);
-    setScreen('home'); // Briefly show loading
+  const handleOnboardingComplete = (profile: {
+    displayName: string;
+    phoneNumber: string;
+    bankName: string;
+    accountNumber: string;
+    balance: number;
+  }) => {
+    setWallet({
+      displayName: profile.displayName,
+      balance: profile.balance,
+      accountNumber: profile.accountNumber,
+      bankName: profile.bankName,
+      points: 0,
+    });
+    setHasProfile(true);
+    setScreen('home');
+  };
 
+  const handleLogout = async () => {
     try {
-      // Simulate processing delay (like a real bank)
-      await new Promise((res) => setTimeout(res, 1500));
+      await signOut(auth);
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
+  };
 
+  // ── QR Scan ───────────────────────────────────────────
+  const handleBarCodeScanned = useCallback(
+    async ({ data }: { data: string }) => {
+      if (scanned || loading) return;
+      setScanned(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLoading(true);
+
+      try {
+        const parsed = JSON.parse(data);
+        if (!parsed.orderId) throw new Error('Invalid QR');
+        const orderData = await api.getOrder(parsed.orderId);
+        setOrder(orderData);
+        setScreen('checkout');
+      } catch (e: any) {
+        Alert.alert('Error', e?.message || 'Could not read QR code');
+        setScanned(false);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [scanned, loading]
+  );
+
+  // ── PIN complete → execute transaction ────────────────
+  const handlePinComplete = async (_pin: string) => {
+    if (!order || !firebaseUser) return;
+    setLoading(true);
+    try {
       const result = await api.executeTransaction({
         orderId: order.id,
-        userId: DEMO_USER_ID,
+        userId: firebaseUser.uid,
       });
-
-      setTxResult(result);
-      if (result.newBalance !== undefined) {
-        setBalance(result.newBalance);
+      setTxResult({
+        success: result.status === 'COMPLETED',
+        message: result.message,
+        newBalance: result.newBalance,
+        pointsEarned: result.pointsEarned,
+      });
+      if (result.newBalance !== undefined && wallet) {
+        setWallet({ ...wallet, balance: result.newBalance });
       }
-      setTxError('');
       setScreen('result');
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : 'Transaction failed';
+    } catch (error: any) {
       setTxResult({
         success: false,
-        orderId: order.id,
-        status: 'FAILED',
-        message,
+        message: error?.message || 'Transaction failed',
       });
-      setTxError(message);
       setScreen('result');
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Reset to home ────────────────────────────────────────
-  const handleDone = () => {
-    setScreen('home');
+  // ── Reset ─────────────────────────────────────────────
+  const resetToHome = () => {
     setOrder(null);
     setTxResult(null);
-    setTxError('');
-    setScanning(false);
+    setScanned(false);
+    setScreen('home');
   };
 
-  // ── Navigate to scanner ──────────────────────────────────
-  const handleOpenScanner = async () => {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
-        Alert.alert('Permission Required', 'Camera access is needed to scan QR codes.');
-        return;
-      }
-    }
-    setScanning(false);
-    setScreen('scan');
-  };
-
-  return (
-    <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0e1a" />
-
-      {/* ═══════════ HOME SCREEN ═══════════ */}
-      {screen === 'home' && !loading && (
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.homeContainer}>
-            {/* Header */}
-            <View style={styles.homeHeader}>
-              <View>
-                <Text style={styles.greeting}>Welcome back,</Text>
-                <Text style={styles.userName}>{DEMO_USER_NAME}</Text>
-              </View>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>
-                  {DEMO_USER_NAME.charAt(0)}
-                </Text>
-              </View>
-            </View>
-
-            {/* Balance Card */}
-            <View style={styles.balanceCard}>
-              <View style={styles.balanceGradient}>
-                <Text style={styles.balanceLabel}>Available Balance</Text>
-                <Text style={styles.balanceAmount}>{formatVND(balance)}</Text>
-                <View style={styles.balanceMeta}>
-                  <View style={styles.balanceMetaItem}>
-                    <Text style={styles.balanceMetaIcon}>⭐</Text>
-                    <Text style={styles.balanceMetaText}>0 points</Text>
-                  </View>
-                  <View style={styles.balanceMetaItem}>
-                    <Text style={styles.balanceMetaIcon}>💳</Text>
-                    <Text style={styles.balanceMetaText}>VND</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* Quick Actions */}
-            <View style={styles.actionsRow}>
-              <TouchableOpacity
-                style={styles.actionCard}
-                onPress={handleOpenScanner}
-                activeOpacity={0.7}
-              >
-                <View style={styles.actionIcon}>
-                  <Text style={styles.actionIconText}>📷</Text>
-                </View>
-                <Text style={styles.actionLabel}>Scan & Pay</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-                <View style={[styles.actionIcon, styles.actionIconAlt]}>
-                  <Text style={styles.actionIconText}>📊</Text>
-                </View>
-                <Text style={styles.actionLabel}>History</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-                <View style={[styles.actionIcon, styles.actionIconAlt2]}>
-                  <Text style={styles.actionIconText}>🎁</Text>
-                </View>
-                <Text style={styles.actionLabel}>Rewards</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Recent Activity Placeholder */}
-            <View style={styles.recentSection}>
-              <Text style={styles.recentTitle}>Recent Activity</Text>
-              <View style={styles.emptyActivity}>
-                <Text style={styles.emptyIcon}>📋</Text>
-                <Text style={styles.emptyText}>No transactions yet</Text>
-                <Text style={styles.emptySubtext}>
-                  Scan a merchant QR code to make your first payment
-                </Text>
-              </View>
-            </View>
-          </View>
-        </SafeAreaView>
-      )}
-
-      {/* ═══════════ LOADING OVERLAY ═══════════ */}
-      {loading && screen === 'home' && (
-        <View style={styles.loadingOverlay}>
-          <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color="#6366f1" />
-            <Text style={styles.loadingText}>Processing payment...</Text>
-            <Text style={styles.loadingSubtext}>Please wait</Text>
-          </View>
+  // ── Loading ───────────────────────────────────────────
+  if (authLoading || screen === 'loading') {
+    return (
+      <View style={styles.loadingContainer}>
+        <StatusBar style="light" />
+        <View style={styles.logoBox}>
+          <Text style={styles.logoText}>TC</Text>
         </View>
-      )}
+        <ActivityIndicator color="#6366f1" size="large" style={{ marginTop: 24 }} />
+      </View>
+    );
+  }
 
-      {/* ═══════════ SCANNER SCREEN ═══════════ */}
-      {screen === 'scan' && (
-        <View style={styles.scannerContainer}>
+  // ── Auth Screen ───────────────────────────────────────
+  if (screen === 'auth' || !firebaseUser) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <AuthScreen onAuthSuccess={handleAuthSuccess} />
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Onboarding ────────────────────────────────────────
+  if (screen === 'onboarding' && firebaseUser) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <OnboardingScreen
+          uid={firebaseUser.uid}
+          email={firebaseUser.email || ''}
+          onComplete={handleOnboardingComplete}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Transfer Screen ───────────────────────────────────
+  if (screen === 'transfer') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <TransferScreen
+          userUid={firebaseUser.uid}
+          currentBalance={wallet?.balance || 0}
+          onBack={resetToHome}
+          onSuccess={(newBalance) => {
+            if (wallet) setWallet({ ...wallet, balance: newBalance });
+            resetToHome();
+          }}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Scanner ───────────────────────────────────────────
+  if (screen === 'scan') {
+    if (!permission?.granted) {
+      return (
+        <SafeAreaProvider>
+          <View style={styles.container}>
+            <StatusBar style="light" />
+            <SafeAreaView style={styles.centerContent}>
+              <Text style={styles.permTitle}>📷 Camera Permission</Text>
+              <Text style={styles.permText}>
+                We need camera access to scan payment QR codes
+              </Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
+                <Text style={styles.primaryBtnText}>Grant Permission</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={resetToHome} style={{ marginTop: 16 }}>
+                <Text style={styles.linkText}>← Back to Home</Text>
+              </TouchableOpacity>
+            </SafeAreaView>
+          </View>
+        </SafeAreaProvider>
+      );
+    }
+
+    return (
+      <SafeAreaProvider>
+        <View style={styles.container}>
+          <StatusBar style="light" />
           <CameraView
             style={StyleSheet.absoluteFillObject}
-            barcodeScannerSettings={{
-              barcodeTypes: ['qr'],
-            }}
-            onBarcodeScanned={scanning ? undefined : handleBarCodeScanned}
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
           />
-
-          {/* Scanner overlay */}
-          <View style={styles.scannerOverlay}>
-            <SafeAreaView style={styles.scannerHeader}>
-              <TouchableOpacity
-                style={styles.scannerBackBtn}
-                onPress={() => setScreen('home')}
-              >
-                <Text style={styles.scannerBackText}>← Back</Text>
+          {/* Overlay */}
+          <View style={styles.scanOverlay}>
+            <SafeAreaView style={styles.scanHeader}>
+              <TouchableOpacity onPress={resetToHome}>
+                <Text style={styles.scanClose}>✕</Text>
               </TouchableOpacity>
-              <Text style={styles.scannerTitle}>Scan QR Code</Text>
-              <View style={{ width: 60 }} />
+              <Text style={styles.scanTitle}>Scan QR Code</Text>
+              <View style={{ width: 32 }} />
             </SafeAreaView>
-
-            {/* Scanner frame */}
-            <View style={styles.scannerFrame}>
-              <View style={styles.scannerCorner} />
-              <View style={[styles.scannerCorner, styles.scannerCornerTR]} />
-              <View style={[styles.scannerCorner, styles.scannerCornerBL]} />
-              <View style={[styles.scannerCorner, styles.scannerCornerBR]} />
-              <Animated.View style={styles.scannerLine} />
+            <View style={styles.scanFrame}>
+              <View style={styles.scanCornerTL} />
+              <View style={styles.scanCornerTR} />
+              <View style={styles.scanCornerBL} />
+              <View style={styles.scanCornerBR} />
             </View>
-
-            <Text style={styles.scannerHint}>
-              Point your camera at the merchant's QR code
+            <Text style={styles.scanHint}>
+              Point camera at the merchant's QR code
             </Text>
           </View>
+          {loading && (
+            <View style={styles.scanLoading}>
+              <ActivityIndicator color="#6366f1" size="large" />
+              <Text style={styles.scanLoadingText}>Reading QR...</Text>
+            </View>
+          )}
         </View>
-      )}
+      </SafeAreaProvider>
+    );
+  }
 
-      {/* ═══════════ CHECKOUT SCREEN ═══════════ */}
-      {screen === 'checkout' && order && (
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.checkoutContainer}>
+  // ── Checkout ──────────────────────────────────────────
+  if (screen === 'checkout' && order) {
+    return (
+      <SafeAreaProvider>
+        <View style={styles.container}>
+          <StatusBar style="light" />
+          <SafeAreaView style={styles.checkoutContainer}>
+            <Text style={styles.checkoutLabel}>PAYMENT REQUEST</Text>
+            <View style={styles.checkoutCard}>
+              <Text style={styles.merchantName}>{order.merchantName}</Text>
+              <Text style={styles.checkoutAmount}>
+                ₫{order.amount.toLocaleString('vi-VN')}
+              </Text>
+              <View style={styles.divider} />
+              <View style={styles.checkoutRow}>
+                <Text style={styles.rowLabel}>Order ID</Text>
+                <Text style={styles.rowValue}>{order.id.slice(0, 12)}...</Text>
+              </View>
+              <View style={styles.checkoutRow}>
+                <Text style={styles.rowLabel}>Your Balance</Text>
+                <Text style={[styles.rowValue, { color: '#22c55e' }]}>
+                  ₫{(wallet?.balance || 0).toLocaleString('vi-VN')}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.checkoutActions}>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => setScreen('pin')}
+              >
+                <Text style={styles.primaryBtnText}>Confirm Payment</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={resetToHome} style={{ marginTop: 12 }}>
+                <Text style={styles.linkText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── PIN ───────────────────────────────────────────────
+  if (screen === 'pin') {
+    return (
+      <SafeAreaProvider>
+        <View style={styles.container}>
+          <StatusBar style="light" />
+          <PinPad
+            onComplete={handlePinComplete}
+            onCancel={resetToHome}
+            loading={loading}
+          />
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Result ────────────────────────────────────────────
+  if (screen === 'result' && txResult) {
+    return (
+      <SafeAreaProvider>
+        <View style={styles.container}>
+          <StatusBar style="light" />
+          <PaymentResult
+            success={txResult.success}
+            message={txResult.message}
+            amount={order?.amount || 0}
+            newBalance={txResult.newBalance}
+            pointsEarned={txResult.pointsEarned}
+            onDone={resetToHome}
+          />
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Home Screen ───────────────────────────────────────
+  return (
+    <SafeAreaProvider>
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <SafeAreaView style={styles.homeContainer}>
+          {/* Header */}
+          <View style={styles.homeHeader}>
+            <View>
+              <Text style={styles.greeting}>
+                Hello, {wallet?.displayName || 'User'} 👋
+              </Text>
+              <Text style={styles.accountInfo}>
+                {wallet?.bankName} • {wallet?.accountNumber}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+              <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Balance Card */}
+          <View style={styles.balanceCard}>
+            <Text style={styles.balanceLabel}>AVAILABLE BALANCE</Text>
+            <Text style={styles.balanceAmount}>
+              ₫{(wallet?.balance || 0).toLocaleString('vi-VN')}
+            </Text>
+            <View style={styles.balanceRow}>
+              <View style={styles.pointsBadge}>
+                <Text style={styles.pointsText}>
+                  🏆 {wallet?.points || 0} points
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Quick Actions */}
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.actionsGrid}>
             <TouchableOpacity
-              style={styles.checkoutBackBtn}
-              onPress={handleDone}
+              style={styles.actionCard}
+              onPress={() => {
+                setScanned(false);
+                setScreen('scan');
+              }}
+              activeOpacity={0.7}
             >
-              <Text style={styles.checkoutBackText}>← Cancel</Text>
+              <View style={[styles.actionIcon, { backgroundColor: '#6366f120' }]}>
+                <Text style={{ fontSize: 26 }}>📷</Text>
+              </View>
+              <Text style={styles.actionLabel}>Scan & Pay</Text>
+              <Text style={styles.actionSub}>QR Payment</Text>
             </TouchableOpacity>
 
-            <View style={styles.checkoutCard}>
-              <View style={styles.merchantAvatar}>
-                <Text style={styles.merchantAvatarText}>
-                  {order.merchantName.charAt(0)}
+            <TouchableOpacity
+              style={styles.actionCard}
+              onPress={() => setScreen('transfer')}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#22c55e20' }]}>
+                <Text style={{ fontSize: 26 }}>💸</Text>
+              </View>
+              <Text style={styles.actionLabel}>Transfer</Text>
+              <Text style={styles.actionSub}>P2P Transfer</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+              <View style={[styles.actionIcon, { backgroundColor: '#f59e0b20' }]}>
+                <Text style={{ fontSize: 26 }}>📊</Text>
+              </View>
+              <Text style={styles.actionLabel}>History</Text>
+              <Text style={styles.actionSub}>Coming soon</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+              <View style={[styles.actionIcon, { backgroundColor: '#a855f720' }]}>
+                <Text style={{ fontSize: 26 }}>🎁</Text>
+              </View>
+              <Text style={styles.actionLabel}>Rewards</Text>
+              <Text style={styles.actionSub}>Coming soon</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Virtual Card */}
+          <View style={styles.virtualCard}>
+            <View style={styles.virtualCardHeader}>
+              <Text style={styles.virtualCardBank}>{wallet?.bankName}</Text>
+              <Text style={styles.virtualCardBrand}>TransCredit</Text>
+            </View>
+            <Text style={styles.virtualCardNumber}>
+              {wallet?.accountNumber?.replace(/(\d{4})/g, '$1 ').trim()}
+            </Text>
+            <View style={styles.virtualCardFooter}>
+              <View>
+                <Text style={styles.virtualCardLabel}>CARDHOLDER</Text>
+                <Text style={styles.virtualCardValue}>{wallet?.displayName}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.virtualCardLabel}>STATUS</Text>
+                <Text style={[styles.virtualCardValue, { color: '#22c55e' }]}>
+                  Active
                 </Text>
               </View>
-
-              <Text style={styles.checkoutMerchant}>{order.merchantName}</Text>
-
-              <Text style={styles.checkoutLabel}>AMOUNT</Text>
-              <Text style={styles.checkoutAmount}>{formatVND(order.amount)}</Text>
-
-              <View style={styles.checkoutDivider} />
-
-              <View style={styles.checkoutDetails}>
-                <View style={styles.checkoutDetailRow}>
-                  <Text style={styles.checkoutDetailLabel}>Order ID</Text>
-                  <Text style={styles.checkoutDetailValue}>
-                    {order.id.slice(0, 8)}...
-                  </Text>
-                </View>
-                <View style={styles.checkoutDetailRow}>
-                  <Text style={styles.checkoutDetailLabel}>Type</Text>
-                  <Text style={styles.checkoutDetailValue}>{order.type}</Text>
-                </View>
-                <View style={styles.checkoutDetailRow}>
-                  <Text style={styles.checkoutDetailLabel}>Your Balance</Text>
-                  <Text style={styles.checkoutDetailValue}>
-                    {formatVND(balance)}
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.confirmBtn,
-                  balance < order.amount && styles.confirmBtnDisabled,
-                ]}
-                onPress={() => setScreen('pin')}
-                disabled={balance < order.amount}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.confirmBtnText}>
-                  {balance < order.amount
-                    ? 'Insufficient Balance'
-                    : 'Confirm Payment'}
-                </Text>
-              </TouchableOpacity>
             </View>
           </View>
         </SafeAreaView>
-      )}
-
-      {/* ═══════════ PIN SCREEN ═══════════ */}
-      {screen === 'pin' && (
-        <PinPad
-          onComplete={handlePinComplete}
-          onCancel={() => setScreen('checkout')}
-        />
-      )}
-
-      {/* ═══════════ RESULT SCREEN ═══════════ */}
-      {screen === 'result' && txResult && order && (
-        <PaymentResult
-          success={txResult.success}
-          amount={order.amount}
-          merchantName={order.merchantName}
-          newBalance={txResult.newBalance}
-          pointsEarned={txResult.pointsEarned}
-          errorMessage={txError}
-          onDone={handleDone}
-        />
-      )}
+      </View>
     </SafeAreaProvider>
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// STYLES
-// ═══════════════════════════════════════════════════════════
+// ── Styles ────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
-    backgroundColor: '#0a0e1a',
+    backgroundColor: '#0a0e17',
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#0a0e17',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoBox: {
+    width: 80,
+    height: 80,
+    borderRadius: 24,
+    backgroundColor: '#6366f1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  centerContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  permTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#f1f5f9',
+    marginBottom: 8,
+  },
+  permText: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  primaryBtn: {
+    backgroundColor: '#6366f1',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    width: '100%',
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  primaryBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  linkText: {
+    fontSize: 14,
+    color: '#6366f1',
+    fontWeight: '600',
   },
 
   // ── Home ──────────────────────────────────────────────
@@ -369,364 +565,295 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   greeting: {
-    fontSize: 14,
-    color: '#9ca3af',
-  },
-  userName: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#f9fafb',
+    color: '#f1f5f9',
+  },
+  accountInfo: {
+    fontSize: 13,
+    color: '#64748b',
     marginTop: 2,
   },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#6366f1',
-    alignItems: 'center',
-    justifyContent: 'center',
+  logoutBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#1e293b',
   },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#fff',
+  logoutText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontWeight: '600',
   },
-
-  // ── Balance Card ──────────────────────────────────────
   balanceCard: {
+    backgroundColor: '#111827',
     borderRadius: 20,
-    overflow: 'hidden',
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#1e293b',
     marginBottom: 24,
   },
-  balanceGradient: {
-    padding: 28,
-    backgroundColor: '#1a1f3a',
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.2)',
-    borderRadius: 20,
-  },
   balanceLabel: {
-    fontSize: 13,
-    color: '#9ca3af',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 2,
   },
   balanceAmount: {
-    fontSize: 38,
+    fontSize: 36,
     fontWeight: '800',
-    color: '#f9fafb',
-    letterSpacing: -1,
-    marginBottom: 16,
+    color: '#f1f5f9',
+    marginTop: 8,
   },
-  balanceMeta: {
+  balanceRow: {
     flexDirection: 'row',
-    gap: 24,
+    marginTop: 12,
   },
-  balanceMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  pointsBadge: {
+    backgroundColor: '#f59e0b15',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
   },
-  balanceMetaIcon: {
-    fontSize: 14,
-  },
-  balanceMetaText: {
+  pointsText: {
     fontSize: 13,
-    color: '#9ca3af',
-  },
-
-  // ── Quick Actions ─────────────────────────────────────
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 32,
-  },
-  actionCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    gap: 10,
-  },
-  actionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionIconAlt: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-  },
-  actionIconAlt2: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-  },
-  actionIconText: {
-    fontSize: 20,
-  },
-  actionLabel: {
-    fontSize: 12,
     fontWeight: '600',
-    color: '#9ca3af',
+    color: '#f59e0b',
   },
-
-  // ── Recent Activity ───────────────────────────────────
-  recentSection: {
-    flex: 1,
-  },
-  recentTitle: {
+  sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#f9fafb',
-    marginBottom: 16,
-  },
-  emptyActivity: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 40,
-  },
-  emptyIcon: {
-    fontSize: 40,
+    fontWeight: '700',
+    color: '#94a3b8',
     marginBottom: 12,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 4,
+  actionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24,
   },
-  emptySubtext: {
-    fontSize: 13,
-    color: '#4b5563',
-    textAlign: 'center',
-    maxWidth: 240,
+  actionCard: {
+    width: (width - 52) / 2,
+    backgroundColor: '#111827',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#1e293b',
   },
-
-  // ── Loading ───────────────────────────────────────────
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#0a0e1a',
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 100,
+    marginBottom: 10,
   },
-  loadingCard: {
-    alignItems: 'center',
-    gap: 16,
-  },
-  loadingText: {
-    color: '#f9fafb',
-    fontSize: 18,
+  actionLabel: {
+    fontSize: 15,
     fontWeight: '600',
+    color: '#f1f5f9',
   },
-  loadingSubtext: {
-    color: '#9ca3af',
+  actionSub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+
+  // ── Virtual Card ──────────────────────────────────────
+  virtualCard: {
+    backgroundColor: '#111827',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#6366f130',
+  },
+  virtualCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  virtualCardBank: {
     fontSize: 14,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  virtualCardBrand: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6366f1',
+  },
+  virtualCardNumber: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#f1f5f9',
+    letterSpacing: 3,
+    marginBottom: 20,
+    fontVariant: ['tabular-nums'],
+  },
+  virtualCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  virtualCardLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#64748b',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  virtualCardValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#f1f5f9',
   },
 
   // ── Scanner ───────────────────────────────────────────
-  scannerContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  scannerOverlay: {
+  scanOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 80,
+    paddingVertical: 60,
   },
-  scannerHeader: {
-    width: '100%',
+  scanHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 40 : 0,
-    paddingBottom: 12,
   },
-  scannerBackBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-  },
-  scannerBackText: {
+  scanClose: {
+    fontSize: 24,
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  scannerTitle: {
-    color: '#fff',
-    fontSize: 18,
     fontWeight: '600',
   },
-  scannerFrame: {
-    width: 260,
-    height: 260,
+  scanTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  scanFrame: {
+    width: 250,
+    height: 250,
     position: 'relative',
   },
-  scannerCorner: {
+  scanCornerTL: {
     position: 'absolute',
-    width: 40,
-    height: 40,
-    borderColor: '#6366f1',
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
     top: 0,
     left: 0,
-    borderTopLeftRadius: 8,
-  },
-  scannerCornerTR: {
+    width: 40,
+    height: 40,
     borderTopWidth: 3,
-    borderLeftWidth: 0,
-    borderRightWidth: 3,
-    left: undefined,
-    right: 0,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 8,
+    borderLeftWidth: 3,
+    borderColor: '#6366f1',
+    borderTopLeftRadius: 12,
   },
-  scannerCornerBL: {
-    borderTopWidth: 0,
-    borderBottomWidth: 3,
-    top: undefined,
-    bottom: 0,
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 8,
-  },
-  scannerCornerBR: {
-    borderTopWidth: 0,
-    borderLeftWidth: 0,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    top: undefined,
-    bottom: 0,
-    left: undefined,
-    right: 0,
-    borderTopLeftRadius: 0,
-    borderBottomRightRadius: 8,
-  },
-  scannerLine: {
+  scanCornerTR: {
     position: 'absolute',
-    width: '100%',
-    height: 2,
-    backgroundColor: '#6366f1',
-    top: '50%',
-    opacity: 0.6,
+    top: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderColor: '#6366f1',
+    borderTopRightRadius: 12,
   },
-  scannerHint: {
-    color: 'rgba(255,255,255,0.7)',
+  scanCornerBL: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    width: 40,
+    height: 40,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: '#6366f1',
+    borderBottomLeftRadius: 12,
+  },
+  scanCornerBR: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderColor: '#6366f1',
+    borderBottomRightRadius: 12,
+  },
+  scanHint: {
     fontSize: 14,
+    color: '#ffffffcc',
     textAlign: 'center',
+  },
+  scanLoading: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#fff',
   },
 
   // ── Checkout ──────────────────────────────────────────
   checkoutContainer: {
     flex: 1,
-    padding: 20,
-  },
-  checkoutBackBtn: {
-    paddingVertical: 8,
-    marginBottom: 16,
-  },
-  checkoutBackText: {
-    color: '#9ca3af',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  checkoutCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    padding: 32,
-    alignItems: 'center',
+    padding: 24,
     justifyContent: 'center',
-  },
-  merchantAvatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-    borderWidth: 2,
-    borderColor: '#6366f1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  merchantAvatarText: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#6366f1',
-  },
-  checkoutMerchant: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#f9fafb',
-    marginBottom: 24,
   },
   checkoutLabel: {
-    fontSize: 12,
-    color: '#9ca3af',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6366f1',
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  checkoutCard: {
+    backgroundColor: '#111827',
+    borderRadius: 20,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  merchantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#94a3b8',
     marginBottom: 8,
   },
   checkoutAmount: {
-    fontSize: 42,
+    fontSize: 40,
     fontWeight: '800',
-    color: '#f9fafb',
-    letterSpacing: -1,
-    marginBottom: 24,
-  },
-  checkoutDivider: {
-    width: '100%',
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    color: '#f1f5f9',
     marginBottom: 20,
   },
-  checkoutDetails: {
-    width: '100%',
-    gap: 14,
-    marginBottom: 32,
+  divider: {
+    width: '80%',
+    height: 1,
+    backgroundColor: '#1e293b',
+    marginBottom: 16,
   },
-  checkoutDetailRow: {
+  checkoutRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  checkoutDetailLabel: {
-    fontSize: 14,
-    color: '#9ca3af',
-  },
-  checkoutDetailValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#f9fafb',
-  },
-  confirmBtn: {
     width: '100%',
-    paddingVertical: 18,
-    borderRadius: 14,
-    backgroundColor: '#6366f1',
-    alignItems: 'center',
-    shadowColor: '#6366f1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    paddingVertical: 8,
   },
-  confirmBtnDisabled: {
-    backgroundColor: '#374151',
-    shadowOpacity: 0,
-    elevation: 0,
+  rowLabel: {
+    fontSize: 14,
+    color: '#64748b',
   },
-  confirmBtnText: {
-    color: '#fff',
-    fontSize: 16,
+  rowValue: {
+    fontSize: 14,
     fontWeight: '600',
+    color: '#f1f5f9',
+  },
+  checkoutActions: {
+    alignItems: 'center',
   },
 });
