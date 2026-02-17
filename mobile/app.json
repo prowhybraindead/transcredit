@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "TransCredit",
     "slug": "mobile",
     "version": "1.0.0",
+    "scheme": "transcredit",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,7 +14,8 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.transcredit.mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,10 +23,21 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.transcredit.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "54a5720a-a890-4c38-a33f-1cd70ab4bb3c"
+      }
+    },
+    "owner": "prowhy"
   }
 }

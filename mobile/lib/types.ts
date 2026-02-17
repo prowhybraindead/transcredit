@@ -43,3 +43,32 @@ export interface WalletData {
     displayName: string;
     points: number;
 }
+
+// ── Admin Types ──────────────────────────────────────
+
+export interface AdminUser {
+    uid: string;
+    email: string;
+    displayName: string;
+    phoneNumber: string;
+    bankName: string;
+    accountNumber: string;
+    balance: number;
+    points: number;
+    currency: string;
+    createdAt: string;
+}
+
+export interface AdjustBalanceRequest {
+    targetUid: string;
+    amount: number;
+    reason?: string;
+}
+
+export interface AdjustBalanceResponse {
+    success: boolean;
+    message: string;
+    newBalance?: number;
+    previousBalance?: number;
+}
+

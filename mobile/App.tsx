@@ -21,8 +21,12 @@ import PaymentResult from './components/PaymentResult';
 import AuthScreen from './screens/AuthScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import TransferScreen from './screens/TransferScreen';
+import AdminScreen from './screens/AdminScreen';
 
-type Screen = 'loading' | 'auth' | 'onboarding' | 'home' | 'scan' | 'checkout' | 'pin' | 'result' | 'transfer';
+// Admin email(s) — users with these emails see the Admin console
+const ADMIN_EMAILS = ['admin@transcredit.com'];
+
+type Screen = 'loading' | 'auth' | 'onboarding' | 'home' | 'scan' | 'checkout' | 'pin' | 'result' | 'transfer' | 'admin';
 
 const { width } = Dimensions.get('window');
 
@@ -69,7 +73,7 @@ export default function App() {
   const fetchWallet = async (uid: string) => {
     try {
       const data = await api.getWallet(uid);
-      setWallet(data);
+      setWallet({ ...data, points: (data as any).points ?? 0 });
       setHasProfile(true);
       setScreen('home');
     } catch (e: any) {
@@ -231,6 +235,16 @@ export default function App() {
             resetToHome();
           }}
         />
+      </SafeAreaProvider>
+    );
+  }
+
+  // ── Admin Screen ──────────────────────────────────────
+  if (screen === 'admin') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <AdminScreen onBack={resetToHome} />
       </SafeAreaProvider>
     );
   }
@@ -450,13 +464,29 @@ export default function App() {
               <Text style={styles.actionSub}>Coming soon</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-              <View style={[styles.actionIcon, { backgroundColor: '#a855f720' }]}>
-                <Text style={{ fontSize: 26 }}>🎁</Text>
-              </View>
-              <Text style={styles.actionLabel}>Rewards</Text>
-              <Text style={styles.actionSub}>Coming soon</Text>
-            </TouchableOpacity>
+            {ADMIN_EMAILS.includes(firebaseUser.email || '') && (
+              <TouchableOpacity
+                style={styles.actionCard}
+                onPress={() => setScreen('admin')}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionIcon, { backgroundColor: '#ef444420' }]}>
+                  <Text style={{ fontSize: 26 }}>🛡️</Text>
+                </View>
+                <Text style={styles.actionLabel}>Admin</Text>
+                <Text style={styles.actionSub}>Manage Users</Text>
+              </TouchableOpacity>
+            )}
+
+            {!ADMIN_EMAILS.includes(firebaseUser.email || '') && (
+              <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                <View style={[styles.actionIcon, { backgroundColor: '#a855f720' }]}>
+                  <Text style={{ fontSize: 26 }}>🎁</Text>
+                </View>
+                <Text style={styles.actionLabel}>Rewards</Text>
+                <Text style={styles.actionSub}>Coming soon</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Virtual Card */}

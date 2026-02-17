@@ -1,0 +1,27 @@
+{
+    "cli": {
+        "version": ">= 15.0.0"
+    },
+    "build": {
+        "development": {
+            "developmentClient": true,
+            "distribution": "internal"
+        },
+        "preview": {
+            "android": {
+                "buildType": "apk"
+            },
+            "distribution": "internal",
+            "env": {
+                "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "460628193343-7ol4jcaf6cjhfkb67s938ijp2vhv8b7e.apps.googleusercontent.com",
+                "EXPO_PUBLIC_API_URL": "http://10.52.101.166:3000"
+            }
+        },
+        "production": {
+            "autoIncrement": true
+        }
+    },
+    "submit": {
+        "production": {}
+    }
+}

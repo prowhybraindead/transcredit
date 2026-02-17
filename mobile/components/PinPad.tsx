@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 interface PinPadProps {
     onComplete: (pin: string) => void;
     onCancel: () => void;
+    loading?: boolean;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');

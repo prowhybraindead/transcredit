@@ -10,7 +10,8 @@ import {
 interface PaymentResultProps {
     success: boolean;
     amount: number;
-    merchantName: string;
+    merchantName?: string;
+    message?: string;
     newBalance?: number;
     pointsEarned?: number;
     errorMessage?: string;
@@ -21,6 +22,7 @@ export default function PaymentResult({
     success,
     amount,
     merchantName,
+    message,
     newBalance,
     pointsEarned,
     errorMessage,
@@ -68,7 +70,7 @@ export default function PaymentResult({
                 </Text>
 
                 <Text style={styles.amount}>{formatVND(amount)}</Text>
-                <Text style={styles.merchantName}>to {merchantName}</Text>
+                <Text style={styles.merchantName}>{merchantName ? `to ${merchantName}` : message || ''}</Text>
 
                 {success && newBalance !== undefined && (
                     <View style={styles.detailsCard}>
